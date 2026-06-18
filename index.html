@@ -444,10 +444,18 @@ let rawText='',allMsgs=[],speakers=[],rightSpeaker=null,chatTitle='',page=0,perP
 let avatars={};   // 角色名 -> dataURL
 let avatarTarget=null;
 
-function applyReplacements(text){let out=text;for(const r of replaceRules){if(!r.from)continue;out=out.split(r.from).join(r.to);}return out;}
+// 取代:套用在「即將顯示的文字」上(不動原始解析資料)
+// 取代:套用在「即將顯示的文字」上(不動原始解析資料)
+// 依原字詞長度由長到短排序,確保「瀨見純子」先於「純子」被取代
+function applyText(s){
+  let out=s;
+  const rules=replaceRules.filter(r=>r.from).slice().sort((a,b)=>b.from.length-a.from.length);
+  for(const r of rules){ out=out.split(r.from).join(r.to); }
+  return out;
+}
 function rebuild(){
-  const text=applyReplacements(rawText);
-  const {msgs,title}=parseChat(text);
+  // 用原始文字解析,角色名與下拉選單維持檔案原樣
+  const {msgs,title}=parseChat(rawText);
   allMsgs=msgs;chatTitle=title||'聊天室';
   speakers=[...new Set(msgs.filter(m=>!m.narration).map(m=>m.name))];
   if(!speakers.includes(rightSpeaker))rightSpeaker=speakers.includes('PC')?'PC':speakers[0];
@@ -466,20 +474,21 @@ function renderPage(){
     if(date!==lastDate){const sys=document.createElement('div');sys.className='sys';sys.textContent=date;chat.appendChild(sys);lastDate=date;}
     if(msg.narration){
       const nar=document.createElement('div');nar.className='narration';
-      nar.innerHTML=renderNarration(msg.body);
+      nar.innerHTML=renderNarration(applyText(msg.body));
       chat.appendChild(nar);
       continue;
     }
     const side=(msg.name===rightSpeaker)?'right':'left';
+    const dispName=applyText(msg.name);  // 訊息區顯示用取代後的名字
     const row=document.createElement('div');row.className='row '+side;
-    const name=document.createElement('div');name.className='name';name.textContent=msg.name;row.appendChild(name);
+    const name=document.createElement('div');name.className='name';name.textContent=dispName;row.appendChild(name);
     const wrap=document.createElement('div');wrap.className='bubble-wrap';
     const av=document.createElement('div');av.className='avatar '+side;
     if(avatars[msg.name]){av.style.backgroundImage='url('+avatars[msg.name]+')';av.textContent='';}
-    else{av.textContent=msg.name.slice(0,1);}
+    else{av.textContent=dispName.slice(0,1);}
     av.title='點擊設定 '+msg.name+' 的頭像';
     av.addEventListener('click',(ev)=>{ev.stopPropagation();openAvatarMenu(av,msg.name,side);});
-    const bubble=document.createElement('div');bubble.className='bubble';bubble.innerHTML=renderBody(msg.body);
+    const bubble=document.createElement('div');bubble.className='bubble';bubble.innerHTML=renderBody(applyText(msg.body));
     wrap.appendChild(av);wrap.appendChild(bubble);row.appendChild(wrap);
     const time=document.createElement('div');time.className='time';time.textContent=msg.time.slice(11);row.appendChild(time);
     chat.appendChild(row);
@@ -654,7 +663,13 @@ document.getElementById('perPageSelect').addEventListener('change',e=>{perPage=p
 document.getElementById('prevBtn').addEventListener('click',()=>{if(page>0){page--;renderPage();}});
 document.getElementById('nextBtn').addEventListener('click',()=>{const tp=Math.ceil(allMsgs.length/perPage);if(page<tp-1){page++;renderPage();}});
 document.getElementById('addReplace').addEventListener('click',()=>addReplaceRow());
-document.getElementById('applyReplace').addEventListener('click',()=>{collectRules();rebuild();});
+document.getElementById('applyReplace').addEventListener('click',()=>{
+  collectRules();
+  rebuild();
+  const valid=replaceRules.filter(r=>r.from).length;
+  if(valid>0) alert('已套用 '+valid+' 條字詞取代規則。');
+  else alert('目前沒有有效的取代規則。\n請在「原字詞」欄位填入要取代的文字。');
+});
 document.getElementById('exportBtn').addEventListener('click',()=>{
   const node=document.getElementById('phone');const btn=document.getElementById('exportBtn');const old=btn.textContent;
   const sH=chat.style.height,sO=chat.style.overflow;
