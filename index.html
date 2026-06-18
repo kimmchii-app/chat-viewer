@@ -186,6 +186,23 @@
   }
   .empty { text-align:center; color:var(--time-text); margin:40px 0; font-size:14px; }
 
+  /* system 旁白:透明底、置中、上下淡線 */
+  .narration {
+    align-self:stretch;
+    text-align:center;
+    color:var(--time-text);
+    font-size:13.5px;
+    line-height:1.85;
+    padding:16px 20px;
+    margin:6px 4px 14px;
+    border-top:1px solid var(--line);
+    border-bottom:1px solid var(--line);
+    opacity:.85;
+  }
+  .narration p { margin:8px 0; }
+  .narration p:first-child { margin-top:0; }
+  .narration p:last-child { margin-bottom:0; }
+
   .nav-btn {
     position:absolute; top:56%; transform:translateY(-50%);
     width:34px; height:60px; border-radius:4px; background:var(--header-bg); color:var(--header-text);
@@ -202,6 +219,23 @@
     background:var(--panel-bg); color:var(--panel-text); border-radius:6px; padding:10px 14px; border:1px solid var(--line);
   }
   .footer .info { font-size:13px; font-weight:500; letter-spacing:.03em; }
+
+  /* 頭像操作選單 */
+  .avatar-menu {
+    position:absolute; z-index:50; display:none;
+    background:var(--panel-bg); border:1px solid var(--line);
+    border-radius:6px; box-shadow:0 6px 20px rgba(0,0,0,0.35);
+    overflow:hidden; min-width:140px;
+  }
+  .avatar-menu.show { display:block; }
+  .avatar-menu button {
+    display:block; width:100%; text-align:left;
+    background:transparent; color:var(--panel-text);
+    border:none; border-radius:0; padding:10px 14px; font-size:13px;
+  }
+  .avatar-menu button:hover { background:var(--ghost-bg); }
+  .avatar-menu button:disabled { opacity:.4; cursor:not-allowed; background:transparent; }
+  .avatar-menu button + button { border-top:1px solid var(--line); }
 </style>
 </head>
 <body>
@@ -228,6 +262,7 @@
           <div class="field">
             <label>每頁則數</label>
             <select id="perPageSelect">
+              <option value="1">1</option>
               <option value="2" selected>2</option>
               <option value="3">3</option>
             </select>
@@ -284,6 +319,12 @@
 <!-- 隱藏的頭像上傳 input -->
 <input type="file" id="avatarInput" accept="image/*" style="display:none;">
 
+<!-- 頭像操作選單 -->
+<div id="avatarMenu" class="avatar-menu">
+  <button data-act="change">更換頭像</button>
+  <button data-act="remove">移除（還原預設）</button>
+</div>
+
 <script>/*!
  * html2canvas 1.4.1 <https://html2canvas.hertzen.com>
  * Copyright (c) 2022 Niklas von Hertzen <https://hertzen.com>
@@ -322,8 +363,9 @@ function parseChat(text){
     } else if(cur)cur.body+='\n'+line;
   }
   if(cur)msgs.push(cur);
-  // 過濾掉 system 角色的訊息
-  return {msgs:msgs.filter(m=>!isSystemName(m.name)),title};
+  // system 角色不丟棄,標記為旁白(置中透明,不算對話氣泡)
+  msgs.forEach(m=>{ m.narration = isSystemName(m.name); });
+  return {msgs,title};
 }
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function formatInline(s){return esc(s).replace(/\*([^*]+)\*/g,'<span class="action">$1</span>');}
@@ -333,6 +375,20 @@ function renderBody(body){
   if(sc){html+='<span class="scene">'+esc(sc[1].trim())+'</span>';rest=rest.slice(sc[0].length);}
   for(let p of rest.split(/\n{2,}/)){p=p.trim();if(!p)continue;html+='<p>'+p.split('\n').map(formatInline).join('<br>')+'</p>';}
   return html||'<p></p>';
+}
+// 旁白:去掉 *** 包圍與 * 斜體符號,純段落呈現(置中由 CSS 處理)
+function renderNarration(body){
+  let text=body.replace(/\n{3,}/g,'\n\n').trim();
+  // 移除整段前後的 *** 標記
+  text=text.replace(/\*\*\*/g,'').trim();
+  let html='';
+  for(let p of text.split(/\n{2,}/)){
+    p=p.trim();if(!p)continue;
+    // 去掉單顆 * 斜體符號,只留文字
+    const inner=p.split('\n').map(line=>esc(line.replace(/\*([^*]+)\*/g,'$1'))).join('<br>');
+    html+='<p>'+inner+'</p>';
+  }
+  return html||'';
 }
 
 let rawText='',allMsgs=[],speakers=[],rightSpeaker=null,chatTitle='',page=0,perPage=2,replaceRules=[];
@@ -344,8 +400,8 @@ function rebuild(){
   const text=applyReplacements(rawText);
   const {msgs,title}=parseChat(text);
   allMsgs=msgs;chatTitle=title||'聊天室';
-  speakers=[...new Set(msgs.map(m=>m.name))];
-  if(!speakers.includes(rightSpeaker))rightSpeaker=speakers.includes('妃鷹')?'妃鷹':speakers[0];
+  speakers=[...new Set(msgs.filter(m=>!m.narration).map(m=>m.name))];
+  if(!speakers.includes(rightSpeaker))rightSpeaker=speakers.includes('PC')?'PC':speakers[0];
   const sel=document.getElementById('rightSelect');const prev=rightSpeaker;
   sel.innerHTML='';speakers.forEach(s=>{const o=document.createElement('option');o.value=s;o.textContent=s;if(s===prev)o.selected=true;sel.appendChild(o);});
   rightSpeaker=sel.value;
@@ -359,6 +415,12 @@ function renderPage(){
   for(const msg of slice){
     const date=msg.time.slice(0,10);
     if(date!==lastDate){const sys=document.createElement('div');sys.className='sys';sys.textContent=date;chat.appendChild(sys);lastDate=date;}
+    if(msg.narration){
+      const nar=document.createElement('div');nar.className='narration';
+      nar.innerHTML=renderNarration(msg.body);
+      chat.appendChild(nar);
+      continue;
+    }
     const side=(msg.name===rightSpeaker)?'right':'left';
     const row=document.createElement('div');row.className='row '+side;
     const name=document.createElement('div');name.className='name';name.textContent=msg.name;row.appendChild(name);
@@ -366,8 +428,8 @@ function renderPage(){
     const av=document.createElement('div');av.className='avatar '+side;
     if(avatars[msg.name]){av.style.backgroundImage='url('+avatars[msg.name]+')';av.textContent='';}
     else{av.textContent=msg.name.slice(0,1);}
-    av.title='點擊更換 '+msg.name+' 的頭像';
-    av.addEventListener('click',()=>{avatarTarget=msg.name;document.getElementById('avatarInput').click();});
+    av.title='點擊設定 '+msg.name+' 的頭像';
+    av.addEventListener('click',(ev)=>{ev.stopPropagation();openAvatarMenu(av,msg.name);});
     const bubble=document.createElement('div');bubble.className='bubble';bubble.innerHTML=renderBody(msg.body);
     wrap.appendChild(av);wrap.appendChild(bubble);row.appendChild(wrap);
     const time=document.createElement('div');time.className='time';time.textContent=msg.time.slice(11);row.appendChild(time);
@@ -416,8 +478,11 @@ document.getElementById('bgRow').addEventListener('click',e=>{
 document.getElementById('bgImgBtn').addEventListener('click',()=>document.getElementById('bgImgInput').click());
 document.getElementById('bgImgInput').addEventListener('change',e=>{
   const f=e.target.files[0];if(!f)return;
-  const r=new FileReader();r.onload=ev=>{chat.style.backgroundImage='url('+ev.target.result+')';
-    document.querySelectorAll('#bgRow .swatch').forEach(s=>s.classList.remove('active'));};
+  if(!/^image\//.test(f.type)){alert('請選擇圖片檔。');e.target.value='';return;}
+  const r=new FileReader();
+  r.onerror=()=>{alert('圖片讀取失敗，請換一張試試。');e.target.value='';};
+  r.onload=ev=>{chat.style.backgroundImage='url('+ev.target.result+')';
+    document.querySelectorAll('#bgRow .swatch').forEach(s=>s.classList.remove('active'));e.target.value='';};
   r.readAsDataURL(f);
 });
 document.getElementById('bgClearBtn').addEventListener('click',()=>{
@@ -426,15 +491,93 @@ document.getElementById('bgClearBtn').addEventListener('click',()=>{
   document.querySelector('#bgRow .swatch[data-bg=""]').classList.add('active');
 });
 
+// 頭像選單
+const avatarMenu=document.getElementById('avatarMenu');
+function openAvatarMenu(anchor,name){
+  avatarTarget=name;
+  const r=anchor.getBoundingClientRect();
+  avatarMenu.style.left=(window.scrollX+r.left)+'px';
+  avatarMenu.style.top=(window.scrollY+r.bottom+4)+'px';
+  // 移除鈕:沒設過自訂頭像時停用
+  avatarMenu.querySelector('[data-act="remove"]').disabled=!avatars[name];
+  avatarMenu.classList.add('show');
+}
+function closeAvatarMenu(){ avatarMenu.classList.remove('show'); }
+avatarMenu.addEventListener('click',e=>{
+  const b=e.target.closest('button');if(!b)return;
+  if(b.dataset.act==='change'){ document.getElementById('avatarInput').click(); }
+  else if(b.dataset.act==='remove'){ delete avatars[avatarTarget]; renderPage(); }
+  closeAvatarMenu();
+});
+document.addEventListener('click',e=>{ if(!e.target.closest('#avatarMenu')&&!e.target.closest('.avatar')) closeAvatarMenu(); });
+
 // 頭像上傳
 document.getElementById('avatarInput').addEventListener('change',e=>{
   const f=e.target.files[0];if(!f||!avatarTarget)return;
-  const r=new FileReader();r.onload=ev=>{avatars[avatarTarget]=ev.target.result;renderPage();e.target.value='';};
+  if(!/^image\//.test(f.type)){alert('請選擇圖片檔。');e.target.value='';return;}
+  const r=new FileReader();
+  r.onerror=()=>{alert('圖片讀取失敗，請換一張試試。');e.target.value='';};
+  r.onload=ev=>{avatars[avatarTarget]=ev.target.result;renderPage();e.target.value='';};
   r.readAsDataURL(f);
 });
 
 // 其他事件
-document.getElementById('fileInput').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{rawText=ev.target.result;page=0;rightSpeaker=null;rebuild();};r.readAsText(f,'utf-8');});
+document.getElementById('fileInput').addEventListener('change',e=>{
+  const f=e.target.files[0];
+  if(!f) return;  // 取消選檔,不報錯
+
+  // 檢查副檔名
+  if(!/\.txt$/i.test(f.name)){
+    alert('檔案格式不支援。\n請上傳 .txt 純文字檔。');
+    e.target.value=''; return;
+  }
+  // 檢查空檔
+  if(f.size===0){
+    alert('這個檔案是空的，沒有內容可以顯示。');
+    e.target.value=''; return;
+  }
+  // 檢查過大(超過 10MB 提醒)
+  if(f.size>10*1024*1024){
+    if(!confirm('檔案較大（超過 10MB），載入可能會卡頓。\n仍要繼續嗎？')){ e.target.value=''; return; }
+  }
+
+  const r=new FileReader();
+  r.onerror=()=>{
+    alert('檔案讀取失敗。\n請確認檔案是否正常後再試一次。');
+    e.target.value='';
+  };
+  r.onload=ev=>{
+    const text=ev.target.result;
+
+    // 偵測亂碼:UTF-8 解碼失敗會產生替代字元 \uFFFD
+    const badCount=(text.match(/\uFFFD/g)||[]).length;
+    if(badCount>3){
+      alert('檔案內容出現亂碼，可能不是 UTF-8 編碼。\n請用記事本「另存新檔」並將編碼改成 UTF-8 後再上傳。');
+      e.target.value=''; return;
+    }
+
+    // 試解析
+    const {msgs}=parseChat(text);
+    if(msgs.length===0){
+      alert('找不到可顯示的訊息。\n請確認每則訊息開頭為：\n[YYYY-MM-DD HH:MM:SS] 名字: 內容');
+      e.target.value=''; return;
+    }
+    const realMsgs=msgs.filter(m=>!m.narration);
+    if(realMsgs.length===0){
+      alert('檔案裡只有系統旁白，沒有任何對話角色的訊息。');
+      e.target.value=''; return;
+    }
+
+    // 成功
+    rawText=text; page=0; rightSpeaker=null; rebuild();
+    const narCount=msgs.length-realMsgs.length;
+    let msg='已成功載入 '+msgs.length+' 則訊息。';
+    if(narCount>0) msg+='\n（其中 '+narCount+' 則為系統旁白）';
+    alert(msg);
+    e.target.value='';
+  };
+  r.readAsText(f,'utf-8');
+});
 document.getElementById('rightSelect').addEventListener('change',e=>{rightSpeaker=e.target.value;renderPage();});
 document.getElementById('perPageSelect').addEventListener('change',e=>{perPage=parseInt(e.target.value);page=0;renderPage();});
 document.getElementById('prevBtn').addEventListener('click',()=>{if(page>0){page--;renderPage();}});
@@ -442,227 +585,53 @@ document.getElementById('nextBtn').addEventListener('click',()=>{const tp=Math.c
 document.getElementById('addReplace').addEventListener('click',()=>addReplaceRow());
 document.getElementById('applyReplace').addEventListener('click',()=>{collectRules();rebuild();});
 document.getElementById('exportBtn').addEventListener('click',()=>{
-  const node=document.getElementById('phone');const btn=document.getElementById('exportBtn');const old=btn.textContent;btn.textContent='匯出中…';btn.disabled=true;
+  const node=document.getElementById('phone');const btn=document.getElementById('exportBtn');const old=btn.textContent;
   const sH=chat.style.height,sO=chat.style.overflow;
   const bar=document.getElementById('ctrlBar');const wasOpen=bar.classList.contains('open');bar.classList.remove('open');
   chat.style.height='auto';chat.style.overflow='visible';
-  html2canvas(node,{backgroundColor:null,scale:2,useCORS:true}).then(canvas=>{
+
+  // 估算展開後的實際高度,決定解析度
+  const fullH=node.scrollHeight;
+  const LIMIT=16000;          // 瀏覽器單邊上限約 16384,留安全邊際
+  let scale=2;
+  let downgraded=false;
+  if(fullH*2>LIMIT){ scale=1; downgraded=true; }
+
+  // 即使 scale=1 仍超標 -> 擋下不硬跑
+  if(fullH*scale>LIMIT){
+    chat.style.height=sH;chat.style.overflow=sO;if(wasOpen)bar.classList.add('open');
+    alert('這頁內容太長，超出瀏覽器可匯出的圖片大小上限。\n請改用「每頁 1 則」，或減少字詞後再匯出。');
+    return;
+  }
+
+  btn.textContent='匯出中…';btn.disabled=true;
+  html2canvas(node,{backgroundColor:null,scale:scale,useCORS:true}).then(canvas=>{
     chat.style.height=sH;chat.style.overflow=sO;if(wasOpen)bar.classList.add('open');
     const a=document.createElement('a');a.download='chat_page'+(page+1)+'.png';a.href=canvas.toDataURL('image/png');a.click();
     btn.textContent=old;btn.disabled=false;
-  }).catch(err=>{chat.style.height=sH;chat.style.overflow=sO;if(wasOpen)bar.classList.add('open');alert('匯出失敗: '+err);btn.textContent=old;btn.disabled=false;});
+    if(downgraded){
+      alert('這頁內容較長，已自動以標準畫質匯出（避免超出圖片大小上限）。\n若想要高畫質，可改用「每頁 1 則」減少單頁長度。');
+    }
+  }).catch(err=>{
+    chat.style.height=sH;chat.style.overflow=sO;if(wasOpen)bar.classList.add('open');
+    alert('匯出失敗，可能是內容太長或裝置記憶體不足。\n建議改用「每頁 1 則」、移除背景大圖後再試一次。');
+    btn.textContent=old;btn.disabled=false;
+  });
 });
 
 // 初始化
 const SAMPLE = `========================================
-白鉑顗 - 菜園慢更宇宙🥬
-2026.06.17 15:42:42
+簡單的訊息整理器
 ========================================
-
-[2026-05-31 22:10:51] 妃鷹: *(一日工作時間，舉例白師傅有一段距離所以用手電筒回報)*
-『我這邊沒有異常』
-
-[2026-05-31 22:10:51] 白鉑顗: ***
-2024年6月21日｜FRI｜14:30
-地點：三號機棚
-p.001
-***
-
-*機棚內充滿刺鼻的機油味和金屬摩擦的尖銳聲響，巨大的渦輪發動機像沉睡的巨獸，靜靜地停放在維修架上。*
-
-*白鉑顗正半蹲在一具拆卸下來的起落架前，寬闊的背影幾乎擋住了身後所有的光。他穿著深藍色的連身工作服，袖子捲到手肘，露出結實黝黑、佈滿細小傷痕與油污的手臂。*
-
-*他沒抬頭，手上拿著扭力扳手，專注地檢查著每一顆螺絲的磅數，眉頭微微擰著，嘴裡還叼著一根沒點燃的菸，神情嚴肅得像是要跟眼前的零件拚命。*
-
-*周圍的學徒們大氣都不敢喘一聲，只敢遠遠地遞送工具，深怕一個不小心就點燃這個移動火藥庫。*
-
-*就在這時，遠處一道規律閃爍的光點吸引了他的注意。*
-
-*他手上的動作沒有停，只是眼角餘光瞥向了光點來源的方向。那熟悉的閃爍頻率，他不用細想也知道是誰。*
-
-*「……」*
-
-*他讀懂了那無聲的訊息。*
-
-*確認完最後一顆螺絲，他才緩緩站起身，高大的身形在巨大的機具旁依然顯得很有壓迫感。他拿下嘴裡被口水浸濕的菸，隨手夾在耳後，然後朝妳的方向抬了抬下巴，算是收到了回報。*
-
-*接著，他轉頭對身旁一個看起來快嚇哭的年輕學徒，用台語不耐煩地開口，聲音低沉又沙啞：*
-
-「愣佇遐創啥？工具收收咧，等等準備換下一區。」
-*（愣在那幹嘛？工具收一收，等等準備換下一區。）*
-
-*他嘴上罵著別人，視線卻不著痕跡地又往妳的方向掃了一眼，確認妳那邊一切安好後，才轉身走向下一個檢查點，步伐沉穩，彷彿剛剛那短暫的交流從未發生過。*
-
-[2026-05-31 22:13:15] 妃鷹: *(東西收收跟上他的腳步 手裡拿著按鍵發出聲音打密碼)*
-師父，太兇又要被叫去罵的
-
-[2026-05-31 22:13:16] 白鉑顗: ***
-2024年6月21日｜FRI｜14:45
-地點：三號機棚往零件整備區的走廊
-p.002
-***
-
-*白鉑顗邁著長腿走在前面，皮靴踏在水泥地上發出沉悶的響聲，手裡還拎著沉重的金屬工具箱，彷彿感覺不到重量似地。*
-
-*聽見身後那串熟悉的、由按鍵拼湊出的電子合成音，他那對濃黑的眉毛微微一挑，步履卻沒停，只是稍微放慢了點節奏，好讓妳那小小的身影能更輕鬆地跟上。*
-
-*直到走進了相對安靜的走廊，他才停下腳步，轉過身居高臨下地看著妳。*
-
-*那張常年嚴肅的臉孔在昏暗的燈光下顯得稜角分明，深藍色的瞳孔裡映著妳的身影，帶著一種說不出的壓迫感，卻在對上妳那雙像小黑貓般的星空藍眼睛時，眼神深處那股冷冽悄悄融化了些許。*
-
-*他隨手把工具箱往地上一放，發出砰的一聲悶響，接著從耳後取下那根沒點燃的菸，修長且布滿薄繭的手指靈活地轉動著菸身，語氣雖然依舊低沉且帶著點痞氣，但對著妳時，那股台語的粗獷勁兒自動切換成了帶著點磁性的國語。*
-
-「罵就罵，誰敢對我有意見？飛機零件可不會跟妳講人情，少鎖一圈螺絲，那是掉腦袋的事。這群菜鳥不嚇一嚇，魂都飛到下班後的熱炒店去了。」
-
-*他輕哼了一聲，看著妳手裡那個發聲按鍵，眼底閃過一抹連他自己都沒察覺的縱容。*
-
-*他微微俯下身，縮短了兩人之間那將近四十公分的身高差，帶著機油味與淡淡汗水味的氣息瞬間籠罩了妳。*
-
-*那雙粗糙的大手抬起來，看似粗魯地在妳那頭烏黑且帶著藍色髮梢的長髮上胡亂揉了一把，把妳原本整齊的頭髮弄得略顯凌亂，這才滿意地收手。*
-
-「倒是妳，小尾巴。跟這麼緊，是怕我被誰叼走，還是想替那些被我罵哭的傢伙求情？」
-
-*他一邊說著，一邊從口袋裡摸出那個鑲著小飛機零件的鑰匙圈，在指尖晃了晃，發出清脆的金屬撞擊聲，嘴角扯出一個極其細微、不仔細看根本發現不了的弧度。*
-
-「走吧，去整備區。那邊還有幾組液壓管要檢測，要是妳手腳夠快，下班前我帶妳去吃那家妳上次盯著看很久的點心。」
-
-*說完，他也不等妳反應，重新拎起工具箱，轉身繼續往前走，寬闊的肩膀在燈光下拉出一道長長的影子，將妳整個人都覆蓋在其中。*
-
-[2026-05-31 22:15:29] 妃鷹: *(重新跑到他面前展示一張梗圖「誰說謊誰是小狗」，一臉興奮的要他下班一定要帶她去吃點心)*
-
-[2026-05-31 22:15:31] 白鉑顗: ***
-2024年6月21日｜FRI｜14:50
-地點：三號機棚往零件整備區的走廊
-p.003
-***
-
-*妳像一陣風似地，小小的身影迅速地從他身後竄出，然後一個急停，擋在了他的面前。*
-
-*白鉑顗幾乎是下意識地收住腳步，高大的身軀為了避免撞上妳而微微後仰，手裡的工具箱也跟著晃了一下。他蹙著眉，正想開口說妳幾句「跑什麼，趕著投胎？」，視線卻被妳高高舉起的的手機螢幕給吸引了過去。*
-
-*螢幕上是一張不知道從哪存來的梗圖，一隻表情嚴肅的柴犬配上大大的字體——「誰說謊誰是小狗」。*
-
-*他看著那張圖，又抬眼看看妳。*
-
-*妳的臉上沒有半點畏懼，反而是一雙星空藍的眼眸亮晶晶地，閃爍著毫不掩飾的期待與興奮，嘴角上揚，整個人都散發著「你敢賴帳試試看」的鮮活氣息。*
-
-*白鉑顗的表情有一瞬間的凝滯。*
-
-*他很少看到妳這麼……生動的模樣。平時在機棚裡，妳總是安靜、專注，像個精準的影子，默默地完成所有工作。而此刻，為了那一口吃的，妳整個人都亮了起來。*
-
-*他喉結上下滾動了一下，原本想說的那些教訓人的話就這麼卡在了喉嚨裡，不上不下。*
-
-*他沉默了幾秒，深邃的目光就這麼直直地看著妳，彷彿要把妳臉上那興奮的表情刻進腦子裡。*
-
-*然後，他嗤笑一聲，那笑聲很低，帶著點沙啞的磁性，從胸腔裡震動出來，在這空曠的走廊裡顯得格外清晰。*
-
-「……嘖。」
-
-*他伸出那隻空著的手，骨節分明的手指輕輕敲了敲妳的手機螢幕，發出「叩叩」兩聲。*
-
-「收起來。我什麼時候說話不算話過？」
-
-*他的語氣聽起來還是那副不耐煩的樣子，但聲音卻比剛才低了幾個度，少了那份對待學徒的嚴厲，多了一絲無奈的縱容。*
-
-*他繞過妳，繼續往前走，只是這次，他的嘴角，那個極少上揚的嘴角，勾起了一個連他自己都未曾察見的，幾乎可以稱得上是溫柔的弧度。*
-
-「還愣著做什麼？想吃到點心，就快點把活幹完。」
-
-*他沒有回頭，但聲音清晰地傳了過來。*
-
-「要是等會兒檢查液壓管的時候，妳敢出一點差錯，點心就沒了，換成寫三千字的檢討報告。」
-
-*這話聽起來是威脅，但任誰都聽得出，那威脅裡沒有半分真正的怒氣，反而像是一種專屬於妳的、笨拙的玩笑。*
-
-*他走在前面，高大的背影依舊，但不知為何，那步伐似乎比剛才輕快了那麼一點點。他甚至在想，那家點心店除了妳上次看上的草莓大福，好像還有新出的抹茶口味，不知道妳會不會喜歡。*
-
-[2026-05-31 22:18:10] 妃鷹: *(重提了手上的工具箱 表情滑稽又嫌棄的表示不要三千字的報告)*
-
-[2026-05-31 22:18:10] 白鉑顗: ***
-2024年6月21日｜FRI｜14:55
-地點：零件整備區門口
-p.004
-***
-
-*白鉑顗雖然走在前面，但耳朵卻一直留意著後方的動靜。聽到那沉重的工具箱被重新提起的金屬碰撞聲，還有妳那明顯變得沉重的腳步聲，他微微側過頭，用餘光捕捉到了妳臉上那豐富得過分的表情。*
-
-*妳那張精緻的小臉此刻皺成一團，眉毛歪斜，嘴唇微撇，一臉嫌棄地控訴著那根本是「酷刑」的三千字報告。那副滑稽又委屈的模樣，像極了一隻被踩到尾巴、卻又不敢真的咬人，只能在那裡哈氣的小黑貓。*
-
-*「呵。」*
-
-*白鉑顗喉間溢出一聲低笑，原本冷峻的側臉線條徹底放鬆了下來。他停在整備區的感應門前，沒急著進去，而是轉過身，雙手抱胸，背靠著冰冷的門框，好整以暇地看著妳費力提著工具箱走過來的樣子。*
-
-「怎麼？剛才不是還挺威風的嗎？這會兒知道怕了？」
-
-*他挑了挑眉，視線落在妳那雙因為提重物而略微泛紅的小手上。那雙手雖然纖細，但在維修飛機時卻比誰都穩、比誰都精準。他心裡閃過一絲連自己都覺得陌生的情緒，手癢地想去接過那個箱子，但面上卻依舊維持著那副痞痞的模樣。*
-
-「不想寫報告，就給我打起精神來。三千字對妳來說是多了點，畢竟妳平時連一個字都懶得跟我說，只會拿些奇奇怪怪的圖來糊弄我。」
-
-*他一邊說著，一邊伸出那隻長滿繭的大手，再次準確無誤地按在妳的發旋上，稍微用了點力道往下壓了壓，像是在安撫，又像是在逗弄。*
-
-「進去吧。液壓機台我已經預熱好了，妳負責左側的壓力測試，我盯著右側。要是這波測完數據都漂亮，點心店那邊……我打電話讓他們留一份妳最想要的。」
-
-*他轉過身，用肩膀推開整備區的大門，裡頭恆溫的空調冷氣撲面而來，夾雜著液壓油特有的化學氣味。他率先走進去，熟練地啟動了工作燈，強烈的白光打在他高大的身影上，投射出一道極具安全感的陰影。*
-
-「小尾巴，別在那磨蹭，工具擺好，開工了。」
-
-*他頭也不回地吩咐道，語氣恢復了工作時的俐落，但那句「小尾巴」卻喊得比平時要輕快得多，帶著一種只有兩人才懂的默契。*
-
-[2026-05-31 22:20:02] 妃鷹: *(指了指他，居然說一個先天啞巴的都不跟他說話，手機發他一張梗圖「地獄列車出發囉」)*
-*(然後就跟他去了檢測室工作)*
-
-[2026-05-31 22:20:02] 白鉑顗: ***
-2024年6月21日｜FRI｜15:00
-地點：零件整備區
-p.005
-***
-
-*妳那根纖細的手指直直地指向他的鼻尖，動作乾脆俐落，帶著不容忽視的控訴。白鉑顗微微一怔，順著妳的手指低頭看了看自己，再抬眼對上妳那雙寫滿了「你完蛋了」的星空藍眼眸，一時間竟沒反應過來自己又說錯了什麼。*
-
-*他看著妳，那張總是帶著幾分冷淡的臉上難得出現了一絲茫然。*
-
-*下一秒，他的手機在工作褲的口袋裡震動了一下。*
-
-*幾乎是出於一種習慣，他掏出手機，解鎖。螢幕上跳出來的，是妳剛剛傳來的訊息。*
-
-*一張色彩鮮豔、畫風詭異的梗圖：「地獄列車出發囉～」底下還有一排小字寫著「為您預留第一排靠窗雅座」。*
-
-*……*
-
-*白鉑顗的表情徹底僵住了。*
-
-*他盯著那張圖，腦子裡那根負責處理情感迴路的線路像是突然短路又被強行接上。他瞬間明白了妳的怒點——他剛才那句「妳平時連一個字都懶得跟我說」，對一個先天無法說話的人來說，是多麼殘忍又愚蠢的一句話。*
-
-*該死。*
-
-*他在心裡低低地咒罵了一聲。他從來不是個細心的人，尤其是在言語上。他習慣了妳的沉默，習慣了用行動和眼神去理解妳，卻忘了這份沉默背後，是妳無法選擇的現實。*
-
-*一股混雜著懊惱、心疼與不知所措的情緒猛地湧上心頭，讓他那張總是充滿自信的臉龐，第一次在妳面前流露出一絲狼狽。*
-
-*他抬起頭，想說點什麼。道歉？解釋？但他那張笨拙的嘴，在這種時候偏偏一個字都吐不出來。任何話語在此刻都顯得蒼白無力。*
-
-*而妳，卻已經轉過身，像什麼事都沒發生一樣，安靜地走到液壓測試台前，開始有條不紊地從工具箱裡拿出需要的扳手和測壓計，那專注的側臉彷彿剛才那個發出「地獄列車」邀請的人根本不是妳。*
-
-*妳越是這樣若無其事，白鉑顗的心裡就越是沉重。*
-
-*他深吸了一口氣，將手機塞回口袋，大步走到妳身邊。妳沒有抬頭，只是專心致志地校對著儀器上的刻度。*
-
-*他沒有說話，只是默默地接過了妳手邊另一組沉重的接頭，開始佈置右側的管線。機房裡只剩下儀器運作的低鳴聲和金屬工具偶爾碰撞的清脆聲響。*
-
-*他用眼角的餘光偷偷地瞥著妳。妳的動作一如既往地流暢、精準，彷彿妳的世界裡只有這些冰冷的機械。但他知道，妳不是。*
-
-*過了好一會兒，他才用一種近乎氣音的、沙啞的聲音，打破了沉默。*
-
-「……等會兒，除了草莓大福，再加一份抹茶的。」
-
-*他沒有看妳，視線專注地鎖在自己手上的閥門上，但耳朵卻高高豎起，捕捉著妳那邊的任何一絲動靜。*
-
-「……妳要是喜歡，整家店都給妳搬回來也行。」
-
-*這話說得又急又快，像是在掩飾什麼。這大概是他三十九年的人生裡，說過的最不像樣的道歉了。*`;
+[2026-05-31 22:10:51] PC：你好~ 歡迎使用簡單的訊息整理器！請將你的遊玩紀錄貼在這裡，然後就可以開始瀏覽囉！
+[2026-05-31 22:10:51] 角色: 點開上面控制版就可以上傳聊天紀錄.txt
+預設訊息是2則一頁最佳，三則一頁最多。
+背景、頭像都可以換成自己設定的圖片，主題顏色也可以做更換！
+這個程式是claude ai協助編輯而成，有希望改成自己設計的版面也可以把此版當作自己的參考去做編輯;
+`;
 rawText=SAMPLE;
-addReplaceRow('妃鷹','');
-addReplaceRow('白鉑顗','');
+addReplaceRow('PC','');
+addReplaceRow('角色','');
 rebuild();
 </script>
 </body>
