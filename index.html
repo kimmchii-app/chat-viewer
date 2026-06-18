@@ -210,8 +210,8 @@
     box-shadow:0 3px 10px rgba(0,0,0,0.3); z-index:5; padding:0; opacity:.92;
   }
   .nav-btn:hover { opacity:1; background:var(--header-bg); }
-  .nav-btn.prev { left:-5px; }
-  .nav-btn.next { right:-5px; }
+  .nav-btn.prev { left:4px; }
+  .nav-btn.next { right:4px; }
   .nav-btn:disabled { opacity:.25; }
 
   .footer {
@@ -225,17 +225,42 @@
     position:absolute; z-index:50; display:none;
     background:var(--panel-bg); border:1px solid var(--line);
     border-radius:6px; box-shadow:0 6px 20px rgba(0,0,0,0.35);
-    overflow:hidden; min-width:140px;
+    overflow:hidden; min-width:140px; max-width:200px;
   }
   .avatar-menu.show { display:block; }
   .avatar-menu button {
     display:block; width:100%; text-align:left;
     background:transparent; color:var(--panel-text);
     border:none; border-radius:0; padding:10px 14px; font-size:13px;
+    white-space:nowrap;
   }
   .avatar-menu button:hover { background:var(--ghost-bg); }
   .avatar-menu button:disabled { opacity:.4; cursor:not-allowed; background:transparent; }
   .avatar-menu button + button { border-top:1px solid var(--line); }
+
+  /* 匯出圖片預覽覆蓋層 */
+  .img-overlay {
+    position:fixed; inset:0; z-index:100; display:none;
+    background:rgba(0,0,0,0.82); padding:20px;
+    overflow-y:auto;
+  }
+  .img-overlay.show { display:flex; align-items:flex-start; justify-content:center; }
+  .img-overlay-inner {
+    max-width:100%; display:flex; flex-direction:column; align-items:center; gap:14px;
+    padding:16px 0;
+  }
+  .img-tip {
+    color:#fff; font-size:14px; text-align:center; line-height:1.6;
+    background:rgba(255,255,255,0.12); padding:10px 16px; border-radius:8px;
+  }
+  #overlayImg {
+    max-width:100%; height:auto; border-radius:6px;
+    box-shadow:0 6px 24px rgba(0,0,0,0.5);
+  }
+  .overlay-close {
+    background:#fff; color:#333; padding:10px 28px; font-size:14px; border-radius:8px;
+  }
+  .overlay-close:hover { background:#eee; }
 </style>
 </head>
 <body>
@@ -322,7 +347,16 @@
 <!-- 頭像操作選單 -->
 <div id="avatarMenu" class="avatar-menu">
   <button data-act="change">更換頭像</button>
-  <button data-act="remove">移除（還原預設）</button>
+  <button data-act="remove">移除頭像</button>
+</div>
+
+<!-- 匯出圖片預覽(iOS 長按存相簿) -->
+<div id="imgOverlay" class="img-overlay">
+  <div class="img-overlay-inner">
+    <p class="img-tip">長按下方圖片 →「加入照片」即可存到相簿<br><span style="font-size:12px;opacity:.8;">（若沒出現「加入照片」，請改用 Safari 或 Chrome 開啟）</span></p>
+    <img id="overlayImg" alt="匯出圖片">
+    <button id="overlayClose" class="overlay-close">關閉</button>
+  </div>
 </div>
 
 <script>/*!
@@ -349,6 +383,21 @@
 // 需忽略的 system 說話者
 const SYSTEM_NAMES = ['Environment (system)','Environment(system)','System','system'];
 function isSystemName(n){ return SYSTEM_NAMES.includes(n.trim()); }
+
+// 偵測 iOS / iPadOS(download 屬性無法存相簿,需改用長按)
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.platform) ||
+  (navigator.userAgent.includes('Mac') && 'ontouchend' in document) ||
+  /iPhone|iPad|iPod/.test(navigator.userAgent);
+
+// 覆蓋層:顯示圖片供長按存相簿
+function showImageOverlay(dataUrl){
+  document.getElementById('overlayImg').src=dataUrl;
+  document.getElementById('imgOverlay').classList.add('show');
+}
+function closeImageOverlay(){
+  document.getElementById('imgOverlay').classList.remove('show');
+  document.getElementById('overlayImg').src='';
+}
 
 function parseChat(text){
   const lines=text.split(/\r?\n/);const msgs=[];
@@ -429,7 +478,7 @@ function renderPage(){
     if(avatars[msg.name]){av.style.backgroundImage='url('+avatars[msg.name]+')';av.textContent='';}
     else{av.textContent=msg.name.slice(0,1);}
     av.title='點擊設定 '+msg.name+' 的頭像';
-    av.addEventListener('click',(ev)=>{ev.stopPropagation();openAvatarMenu(av,msg.name);});
+    av.addEventListener('click',(ev)=>{ev.stopPropagation();openAvatarMenu(av,msg.name,side);});
     const bubble=document.createElement('div');bubble.className='bubble';bubble.innerHTML=renderBody(msg.body);
     wrap.appendChild(av);wrap.appendChild(bubble);row.appendChild(wrap);
     const time=document.createElement('div');time.className='time';time.textContent=msg.time.slice(11);row.appendChild(time);
@@ -493,14 +542,36 @@ document.getElementById('bgClearBtn').addEventListener('click',()=>{
 
 // 頭像選單
 const avatarMenu=document.getElementById('avatarMenu');
-function openAvatarMenu(anchor,name){
+function openAvatarMenu(anchor,name,side){
   avatarTarget=name;
-  const r=anchor.getBoundingClientRect();
-  avatarMenu.style.left=(window.scrollX+r.left)+'px';
-  avatarMenu.style.top=(window.scrollY+r.bottom+4)+'px';
   // 移除鈕:沒設過自訂頭像時停用
   avatarMenu.querySelector('[data-act="remove"]').disabled=!avatars[name];
+  // 先顯示(但不可見)以便量出選單尺寸
+  avatarMenu.style.visibility='hidden';
   avatarMenu.classList.add('show');
+  const r=anchor.getBoundingClientRect();
+  const mw=avatarMenu.offsetWidth, mh=avatarMenu.offsetHeight;
+  const margin=6;
+  const vw=window.innerWidth;
+  const vh=window.innerHeight;
+
+  // 水平:右側角色 -> 選單右緣貼齊頭像右緣(往左展開)
+  //       左側角色 -> 選單左緣貼齊頭像左緣(往右展開)
+  let left;
+  if(side==='right') left = r.right - mw;
+  else left = r.left;
+  // 夾進視窗,確保完整可見
+  if(left+mw > vw-margin) left = vw - margin - mw;
+  if(left < margin) left = margin;
+
+  // 垂直:預設頭像下方,下方不夠就翻到上方
+  let top=r.bottom+4;
+  if(top+mh > vh-margin) top = r.top - mh - 4;
+  if(top < margin) top = margin;
+
+  avatarMenu.style.left=(window.scrollX+left)+'px';
+  avatarMenu.style.top=(window.scrollY+top)+'px';
+  avatarMenu.style.visibility='';
 }
 function closeAvatarMenu(){ avatarMenu.classList.remove('show'); }
 avatarMenu.addEventListener('click',e=>{
@@ -607,7 +678,13 @@ document.getElementById('exportBtn').addEventListener('click',()=>{
   btn.textContent='匯出中…';btn.disabled=true;
   html2canvas(node,{backgroundColor:null,scale:scale,useCORS:true}).then(canvas=>{
     chat.style.height=sH;chat.style.overflow=sO;if(wasOpen)bar.classList.add('open');
-    const a=document.createElement('a');a.download='chat_page'+(page+1)+'.png';a.href=canvas.toDataURL('image/png');a.click();
+    const dataUrl=canvas.toDataURL('image/png');
+    if(IS_IOS){
+      // iOS 不支援 download 存相簿,改顯示圖片供長按儲存
+      showImageOverlay(dataUrl);
+    } else {
+      const a=document.createElement('a');a.download='chat_page'+(page+1)+'.png';a.href=dataUrl;a.click();
+    }
     btn.textContent=old;btn.disabled=false;
     if(downgraded){
       alert('這頁內容較長，已自動以標準畫質匯出（避免超出圖片大小上限）。\n若想要高畫質，可改用「每頁 1 則」減少單頁長度。');
@@ -617,6 +694,12 @@ document.getElementById('exportBtn').addEventListener('click',()=>{
     alert('匯出失敗，可能是內容太長或裝置記憶體不足。\n建議改用「每頁 1 則」、移除背景大圖後再試一次。');
     btn.textContent=old;btn.disabled=false;
   });
+});
+
+// 覆蓋層關閉
+document.getElementById('overlayClose').addEventListener('click',closeImageOverlay);
+document.getElementById('imgOverlay').addEventListener('click',e=>{
+  if(e.target.id==='imgOverlay') closeImageOverlay();  // 點圖片以外的暗區才關
 });
 
 // 初始化
